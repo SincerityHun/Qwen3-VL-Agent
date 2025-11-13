@@ -1,0 +1,16 @@
+# Server Requirements for Qwen3-VL Inference
+
+# Core dependencies
+torch>=2.0.0
+transformers>=4.57.0
+
+# FastAPI server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Utilities
+numpy>=1.24.0
+pydantic>=2.0.0
+
+# Optional: Flash Attention for speed
+# flash-attn>=2.5.0  # Uncomment if using flash_attention_2

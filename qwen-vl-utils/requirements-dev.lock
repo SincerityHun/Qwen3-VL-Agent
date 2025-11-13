@@ -47,7 +47,7 @@ nvidia-cuda-nvrtc-cu12==12.1.105
 nvidia-cuda-runtime-cu12==12.1.105
     # via torch
 nvidia-cudnn-cu12==9.1.0.70
-    # via torch
+    # via torch`
 nvidia-cufft-cu12==11.0.2.54
     # via torch
 nvidia-curand-cu12==10.3.2.106

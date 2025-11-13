@@ -1,0 +1,22 @@
+# Client Requirements for Qwen3-VL Inference
+
+# Core dependencies
+# torch>=2.0.0
+transformers>=4.57.0
+qwen-vl-utils==0.0.14
+accelerate
+
+# Web UI
+gradio>=4.0.0
+
+# HTTP client
+requests>=2.31.0
+
+# Image/Video processing
+pillow>=10.0.0
+opencv-python>=4.8.0
+decord>=0.6.0  # Video decoding for qwen-vl-utils (preferred backend)
+
+
+# Utilities
+numpy>=1.24.0
