@@ -138,7 +138,7 @@ class ServerLLMInference:
             attention_mask = attention_mask.to(self.device)
         
         # 1. Get text embeddings
-        text_embeds = self.model.language_model.embed_tokens(input_ids)
+        text_embeds = self.model.model.language_model.embed_tokens(input_ids)
         logger.info(f"   Text embeddings: {text_embeds.shape}")
         
         # 2. Merge vision embeddings
@@ -146,9 +146,13 @@ class ServerLLMInference:
             input_ids, text_embeds, vision_embeddings, vision_token_positions
         )
         
-        # 3. Generate with LLM
+        # 3. Generate with full model (not language_model)
+        # Note: When inputs_embeds is provided, Vision Encoder is automatically skipped!
+        # The model only runs: Language Model (self.model) + lm_head
         logger.info("🚀 Running LLM generation...")
-        generated_ids = self.model.language_model.generate(
+        logger.info("   ⚠️  Vision Encoder will be SKIPPED (inputs_embeds provided)")
+        
+        generated_ids = self.model.generate(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,
@@ -197,7 +201,7 @@ class ServerLLMInference:
             attention_mask = attention_mask.to(self.device)
         
         # Get merged embeddings
-        text_embeds = self.model.language_model.embed_tokens(input_ids)
+        text_embeds = self.model.model.language_model.embed_tokens(input_ids)
         inputs_embeds = self._merge_vision_embeddings(
             input_ids, text_embeds, vision_embeddings, vision_token_positions
         )
@@ -225,9 +229,9 @@ class ServerLLMInference:
             'eos_token_id': self.tokenizer.eos_token_id
         }
         
-        # Run generation in background thread
+        # Run generation in background thread (use full model)
         thread = Thread(
-            target=self.model.language_model.generate,
+            target=self.model.generate,
             kwargs=generation_kwargs
         )
         thread.start()

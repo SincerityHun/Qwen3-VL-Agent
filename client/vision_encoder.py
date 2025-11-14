@@ -5,6 +5,7 @@ Extracts and runs only the Vision Encoder (ViT + DeepStack) from Qwen3-VL
 
 from transformers import Qwen3VLForConditionalGeneration
 import torch
+import os
 from typing import Optional
 
 
@@ -17,17 +18,31 @@ class ClientVisionEncoder:
     def __init__(
         self, 
         model_name: str = "Qwen/Qwen3-VL-2B-Instruct",
-        device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device: Optional[str] = None
     ):
         """
         Initialize Vision Encoder
         
         Args:
             model_name: HuggingFace model identifier
-            device: Device to run encoder on ('cuda' or 'cpu')
+            device: Device to run encoder on (e.g., 'cuda:0', 'cuda:1', 'cpu')
+                   If None, uses CUDA_VISIBLE_DEVICES env var or default cuda
         """
+        # Determine device
+        if device is None:
+            if torch.cuda.is_available():
+                # CUDA_VISIBLE_DEVICES remaps GPUs, so always use cuda:0
+                # Example: CUDA_VISIBLE_DEVICES=3 makes GPU 3 appear as cuda:0
+                device = 'cuda:0'
+            else:
+                device = 'cpu'
+        
         print(f"🚀 Loading Vision Encoder from {model_name}...")
-        print(f"   Device: {device}")
+        print(f"   Target device: {device}")
+        print(f"   CUDA_VISIBLE_DEVICES: {os.getenv('CUDA_VISIBLE_DEVICES', 'not set')}")
+        if torch.cuda.is_available():
+            print(f"   Available GPUs: {torch.cuda.device_count()}")
+            print(f"   GPU 0 name: {torch.cuda.get_device_name(0)}")
         
         # Load full model
         full_model = Qwen3VLForConditionalGeneration.from_pretrained(

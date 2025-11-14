@@ -25,6 +25,7 @@ RUN python3 -m pip install -U pip uv
 ENV UV_HTTP_TIMEOUT=500
 
 RUN uv pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+RUN uv pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl
 COPY requirements.txt .
 
 # Install Python dependencies

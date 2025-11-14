@@ -78,15 +78,29 @@ class Qwen3VLClient:
         inputs = self.preprocessor.preprocess(messages)
         
         # 2. Encode vision (if enabled on client)
-        if self.use_vision_encoder and 'pixel_values' in inputs:
+        if self.use_vision_encoder:
+            # Check for either pixel_values (images) or pixel_values_videos (videos)
+            # Following the same logic as test_vision_embedding.py
+            if 'pixel_values_videos' in inputs:
+                pixel_values = inputs['pixel_values_videos']
+                print(f"🎬 Processing video with shape: {pixel_values.shape}")
+            elif 'pixel_values' in inputs:
+                pixel_values = inputs['pixel_values']
+                print(f"📷 Processing image with shape: {pixel_values.shape}")
+            else:
+                raise ValueError("No pixel_values or pixel_values_videos found in preprocessed inputs")
+            
             vision_embeddings = self.vision_encoder.encode(
-                inputs['pixel_values'],
+                pixel_values,
                 inputs.get('image_grid_thw'),
                 inputs.get('video_grid_thw')
             )
         else:
-            # TODO: Send pixel_values to server for encoding
-            vision_embeddings = torch.randn(1, 3584)  # Dummy for now
+            raise NotImplementedError(
+                "Vision encoder is disabled. "
+                "Sending pixel_values to server is not yet implemented. "
+                "Set USE_VISION_ENCODER=true to enable client-side encoding."
+            )
         
         # 3. Get vision token positions
         vision_positions = self.preprocessor.extract_vision_token_positions(
@@ -120,19 +134,24 @@ def create_gradio_interface(client: Qwen3VLClient):
     def chat_fn(message, history, image, video):
         """Process chat message with optional image/video"""
         
-        # Build messages list
+        # Build messages list following the same format as test_vision_embedding.py
+        # Note: process_vision_info expects direct keys without "type" for images/videos
         messages = []
         content = []
         
-        # Add image if provided
+        # Add image if provided (use absolute path without "type" key)
         if image is not None:
-            content.append({"type": "image", "image": f"file://{image}"})
+            import os
+            image_abs_path = os.path.abspath(image)
+            content.append({"image": image_abs_path})  # Direct key, no "type"
         
-        # Add video if provided
+        # Add video if provided (use absolute path without "type" key)
         if video is not None:
-            content.append({"type": "video", "video": f"file://{video}"})
+            import os
+            video_abs_path = os.path.abspath(video)
+            content.append({"video": video_abs_path})  # Direct key, no "type"
         
-        # Add text
+        # Add text (text DOES need "type" key)
         if message:
             content.append({"type": "text", "text": message})
         
