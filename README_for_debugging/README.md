@@ -363,17 +363,3 @@ client_inference/
         - uvicorn
 ```
 
----
-
-## 다음 단계
-
-실제 코드 구현을 원하시면 말씀해주세요. 다음을 생성해드릴 수 있습니다:
-
-1. ✅ `client/preprocessor.py` - qwen-vl-utils 기반 전처리
-2. ✅ `client/vision_encoder.py` - Vision Encoder 추출
-3. ✅ `client/client_api.py` - Client 통합 API
-4. ✅ `server/llm_inference.py` - Server LLM 전용
-5. ✅ `server/server_api.py` - FastAPI 서버
-6. ✅ 예제 코드
-
-어떤 부분부터 구현할까요?

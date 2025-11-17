@@ -1,6 +1,8 @@
-# Client Dockerfile for Qwen3-VL Inference
-FROM python:3.12-slim
+# Server Dockerfile for Qwen3-VL Inference
+ARG CUDA_VERSION=12.8.1
+ARG PYTHON_VERSION=3.12
 
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS base
 # Set working directory
 WORKDIR /app
 
@@ -21,6 +23,8 @@ RUN ln -s /usr/bin/python3.${PYTHON_VERSION} /usr/bin/python
 # Copy requirements
 RUN python3 -m pip install -U pip uv
 ENV UV_HTTP_TIMEOUT=500
+
+# Copy Project package (Torch for CUDA 12.8)
 RUN uv pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
 COPY requirements.txt .
 
@@ -40,6 +44,8 @@ EXPOSE 7860
 ENV GRADIO_SERVER_NAME=0.0.0.0
 ENV GRADIO_SERVER_PORT=7860
 ENV SERVER_URL=http://server:8001
+ENV USE_VISION_ENCODER=true
+ENV MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct
 
 # Run Gradio app
 CMD ["python", "gradio_app.py"]

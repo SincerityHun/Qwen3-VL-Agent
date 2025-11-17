@@ -71,7 +71,7 @@ async def startup_event():
         model_name=model_name,
         device_map=device_map,
         torch_dtype=torch_dtype
-    )
+    ) 
     
     logger.info("✅ Server ready!")
     logger.info("=" * 60)
@@ -203,7 +203,7 @@ if __name__ == "__main__":
     import uvicorn
     
     # Get port from environment
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8001"))
     
     uvicorn.run(
         app,

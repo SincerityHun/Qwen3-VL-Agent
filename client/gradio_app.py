@@ -160,15 +160,23 @@ def create_gradio_interface(client: Qwen3VLClient):
         # Generate response (streaming)
         try:
             full_response = ""
+            # Build history format: [(user_msg, bot_msg), ...]
+            # Append current user message
+            new_history = history + [(message, "")]
+            
             for partial_text in client.process_and_generate(
                 messages, 
                 max_new_tokens=256,
                 stream=True
             ):
                 full_response = partial_text
-                yield full_response
+                # Update last message with streaming response
+                new_history[-1] = (message, full_response)
+                yield new_history
         except Exception as e:
-            yield f"❌ Error: {str(e)}"
+            error_msg = f"❌ Error: {str(e)}"
+            new_history = history + [(message, error_msg)]
+            yield new_history
     
     # Create interface
     with gr.Blocks(title="Qwen3-VL Client") as demo:
@@ -233,6 +241,10 @@ def create_gradio_interface(client: Qwen3VLClient):
             lambda: (None, None, None, []),
             outputs=[image_input, video_input, msg, chatbot]
         )
+        
+        # Clear message box after sending
+        submit.click(lambda: "", None, msg)
+        msg.submit(lambda: "", None, msg)
     
     return demo
 
@@ -241,7 +253,7 @@ def main():
     """Main entry point"""
     # Configuration from environment variables
     model_name = os.getenv("MODEL_NAME", "Qwen/Qwen3-VL-2B-Instruct")
-    server_url = os.getenv("SERVER_URL", "http://server:8000")
+    server_url = os.getenv("SERVER_URL", "http://server:8001")
     use_vision_encoder = os.getenv("USE_VISION_ENCODER", "true").lower() == "true"
     gradio_server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
     gradio_server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))

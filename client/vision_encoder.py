@@ -44,20 +44,38 @@ class ClientVisionEncoder:
             print(f"   Available GPUs: {torch.cuda.device_count()}")
             print(f"   GPU 0 name: {torch.cuda.get_device_name(0)}")
         
-        # Load full model
+        # Load full model on CPU first (to avoid loading Language Model on GPU)
+        print(f"📦 Loading full model on CPU (will extract Vision Encoder only)...")
         full_model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype="auto",
-            device_map=device
+            device_map="cpu"  # ← Load on CPU first!
         )
         
-        # Extract only the Vision Encoder
-        self.vision_encoder = full_model.visual
+        # Extract Vision Encoder and move to target device
+        print(f"🎯 Extracting Vision Encoder and moving to {device}...")
+        self.vision_encoder = full_model.visual.to(device)
         self.vision_encoder.eval()
         self.device = device
         
+        # Delete Language Model immediately (before it touches GPU)
+        print(f"🗑️  Deleting Language Model (not used on client)...")
+        del full_model.model
+        del full_model.lm_head
+        del full_model
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Calculate memory usage
+        vision_params = sum(p.numel() for p in self.vision_encoder.parameters()) / 1e9
+        actual_device = next(self.vision_encoder.parameters()).device
+        
         print(f"✅ Vision Encoder loaded!")
         print(f"   Model: {type(self.vision_encoder).__name__}")
+        print(f"   Parameters: {vision_params:.2f}B")
+        print(f"   Device: {actual_device}")
         
     @torch.no_grad()
     def encode(

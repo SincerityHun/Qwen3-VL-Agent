@@ -1,5 +1,4 @@
 # Server Dockerfile for Qwen3-VL Inference
-
 ARG CUDA_VERSION=12.8.1
 ARG PYTHON_VERSION=3.12
 
@@ -24,6 +23,7 @@ RUN ln -s /usr/bin/python3.${PYTHON_VERSION} /usr/bin/python
 RUN python3 -m pip install -U pip uv
 ENV UV_HTTP_TIMEOUT=500
 
+# Copy Project package (Torch, flash-attention for CUDA 12.8)
 RUN uv pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
 RUN uv pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl
 COPY requirements.txt .

@@ -259,8 +259,8 @@ if __name__ == "__main__":
         print("  python test_vision_embedding.py video <path_to_video>")
         print("  python test_vision_embedding.py image <path_to_image>")
         print("\nExample:")
-        print("  python test_vision_embedding.py video ../cookbooks/assets/omni_recognition/video_example.mp4")
-        print("  python test_vision_embedding.py image ../cookbooks/assets/omni_recognition/image_example.jpg")
+        print("  python test_vision_embedding.py video ../examples/IronMan.mp4")
+        print("  python test_vision_embedding.py image ../examples/dog.jpg")
         sys.exit(1)
     
     media_type = sys.argv[1]

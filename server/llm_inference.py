@@ -1,6 +1,20 @@
 """
 Server-side LLM Inference Module
 Handles generation using only the Language Model (skips Vision Encoder)
+
+Architecture:
+- Vision Encoder: Kept on CPU (not used, saves GPU memory)
+- Language Model: Loaded on GPU (performs actual inference)
+- Vision embeddings: Received from client, merged into text embeddings
+
+Critical Design Decisions:
+1. CPU Offloading: Vision Encoder stays on CPU to save ~0.6GB GPU memory
+2. Device Management: model.device property is patched during generation to return
+   Language Model's device (cuda:0) instead of Vision Encoder's device (cpu)
+3. Token ID Handling: All special token IDs stored as Python int (not tensors)
+   to avoid device mismatch errors during generation
+4. Dual Input: Both input_ids and inputs_embeds passed to generate() for proper
+   sequence length tracking while using custom embeddings
 """
 
 from transformers import Qwen3VLForConditionalGeneration, AutoTokenizer
@@ -38,28 +52,82 @@ class ServerLLMInference:
         logger.info(f"Model: {model_name}")
         logger.info(f"Device map: {device_map}")
         
-        # Load full model (but we'll only use language_model part)
-        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+        # Load full model on CPU first (to avoid loading Vision Encoder on GPU)
+        logger.info("📦 Loading full model on CPU (will extract Language Model only)...")
+        self.full_model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_name,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            attn_implementation="flash_attention_2"  # Use FlashAttention for speed
+            torch_dtype="auto",
+            device_map="cpu"  # ← Load on CPU first!
         )
-        self.model.eval()
+        
+        # Determine target device for Language Model
+        if device_map == "auto":
+            target_device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        else:
+            target_device = device_map
+        
+        logger.info(f"🎯 Moving Language Model to {target_device}...")
+        
+        # Move only Language Model to GPU
+        self.full_model.model.language_model = self.full_model.model.language_model.to(target_device)
+        self.full_model.lm_head = self.full_model.lm_head.to(target_device)
+        
+        # Vision Encoder stays on CPU (we don't use it on server)
+        logger.info("📦 Vision Encoder kept on CPU (not used on server)...")
+        
+        self.full_model.eval()
+        
+        # Keep only language model reference for convenience
+        self.model = self.full_model
         
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         
         # Get model device
-        self.device = next(self.model.parameters()).device
+        self.device = next(self.full_model.model.language_model.parameters()).device
         
-        # Token IDs
+        # Token IDs (store as Python int to avoid device mismatch issues)
         self.IMAGE_TOKEN_ID = 151655
         self.VIDEO_TOKEN_ID = 151656
+        self.pad_token_id = int(self.tokenizer.pad_token_id) if self.tokenizer.pad_token_id is not None else 151643
+        self.eos_token_id = int(self.tokenizer.eos_token_id) if self.tokenizer.eos_token_id is not None else 151645
         
-        logger.info(f"✅ Model loaded on {self.device}")
-        logger.info(f"   Model type: {type(self.model).__name__}")
-        logger.info(f"   Parameters: {sum(p.numel() for p in self.model.parameters()) / 1e9:.2f}B")
+        # CRITICAL FIX: Update model configs with Python int to prevent device mismatch
+        # When Vision Encoder is on CPU but Language Model is on GPU,
+        # config token IDs must be Python int (not tensors) to avoid device conflicts
+        if hasattr(self.full_model, 'config'):
+            self.full_model.config.pad_token_id = self.pad_token_id
+            self.full_model.config.eos_token_id = self.eos_token_id
+            
+        if hasattr(self.full_model, 'generation_config'):
+            self.full_model.generation_config.pad_token_id = self.pad_token_id
+            self.full_model.generation_config.eos_token_id = self.eos_token_id
+        
+        # Calculate actual GPU memory usage
+        language_params = sum(p.numel() for p in self.full_model.model.language_model.parameters()) / 1e9
+        visual_params = sum(p.numel() for p in self.full_model.visual.parameters()) / 1e9
+        
+        # Check device allocation
+        visual_device = next(self.full_model.visual.parameters()).device
+        language_device = next(self.full_model.model.language_model.parameters()).device
+        
+        logger.info(f"✅ Language Model loaded!")
+        logger.info(f"   Language Model: {language_params:.2f}B params on {language_device}")
+        logger.info(f"   Vision Encoder: {visual_params:.2f}B params on {visual_device} (not used)")
+        logger.info(f"   Total params: {sum(p.numel() for p in self.full_model.parameters()) / 1e9:.2f}B")
+        logger.info(f"   GPU memory: Only Language Model (~{language_params:.2f}B params)")
+        logger.info(f"   Token IDs: pad={self.pad_token_id}, eos={self.eos_token_id}")
+        
+        # Verify Vision Encoder is on CPU
+        if visual_device.type == 'cpu':
+            logger.info(f"   ✅ Vision Encoder on CPU (memory efficient)")
+        else:
+            logger.warning(f"   ⚠️  Vision Encoder is on {visual_device}, not CPU!")
+        
+        # Clean up GPU cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         logger.info("=" * 60)
     
     def _merge_vision_embeddings(
@@ -141,30 +209,46 @@ class ServerLLMInference:
         text_embeds = self.model.model.language_model.embed_tokens(input_ids)
         logger.info(f"   Text embeddings: {text_embeds.shape}")
         
-        # 2. Merge vision embeddings
+        # 2. Merge vision embeddings into text embeddings
         inputs_embeds = self._merge_vision_embeddings(
             input_ids, text_embeds, vision_embeddings, vision_token_positions
         )
         
-        # 3. Generate with full model (not language_model)
-        # Note: When inputs_embeds is provided, Vision Encoder is automatically skipped!
-        # The model only runs: Language Model (self.model) + lm_head
-        logger.info("🚀 Running LLM generation...")
-        logger.info("   ⚠️  Vision Encoder will be SKIPPED (inputs_embeds provided)")
+        # 3. CRITICAL FIX: Temporarily patch model.device property
+        # When Vision Encoder is on CPU, model.device returns 'cpu' (first parameter device)
+        # But we need it to return cuda:0 (Language Model device) for correct tensor creation
+        original_device_fn = None
+        if hasattr(self.model, 'device'):
+            original_device_fn = type(self.model).device
+            # Monkey patch to return Language Model's device instead of Vision Encoder's
+            type(self.model).device = property(lambda self: next(self.model.language_model.parameters()).device)
         
-        generated_ids = self.model.generate(
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            do_sample=do_sample,
-            use_cache=True,  # Use KV cache for efficiency
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id
-        )
+        try:
+            # 4. Generate with Language Model
+            # Note: When both input_ids and inputs_embeds are provided:
+            # - input_ids helps determine sequence length and position embeddings
+            # - inputs_embeds is actually used (Vision Encoder is skipped)
+            logger.info("🚀 Running LLM generation...")
+            
+            generated_ids = self.model.generate(
+                input_ids=input_ids,  # For sequence length tracking
+                inputs_embeds=inputs_embeds,  # Actual embeddings to use
+                attention_mask=attention_mask,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=do_sample,
+                use_cache=True,
+                pad_token_id=self.pad_token_id,
+                eos_token_id=self.eos_token_id
+            )
+            
+        finally:
+            # Restore original device property
+            if original_device_fn is not None:
+                type(self.model).device = original_device_fn
         
-        # 4. Decode only the new tokens
+        # 5. Decode only the new tokens
         new_tokens = generated_ids[0, input_ids.shape[1]:]
         generated_text = self.tokenizer.decode(
             new_tokens,
@@ -206,7 +290,7 @@ class ServerLLMInference:
             input_ids, text_embeds, vision_embeddings, vision_token_positions
         )
         
-        # Streaming generation
+        # Setup streaming
         from transformers import TextIteratorStreamer
         from threading import Thread
         
@@ -217,7 +301,8 @@ class ServerLLMInference:
         )
         
         generation_kwargs = {
-            'inputs_embeds': inputs_embeds,
+            'input_ids': input_ids,  # For sequence length tracking
+            'inputs_embeds': inputs_embeds,  # Actual embeddings to use
             'attention_mask': attention_mask,
             'max_new_tokens': max_new_tokens,
             'temperature': temperature,
@@ -225,11 +310,11 @@ class ServerLLMInference:
             'do_sample': True,
             'streamer': streamer,
             'use_cache': True,
-            'pad_token_id': self.tokenizer.pad_token_id,
-            'eos_token_id': self.tokenizer.eos_token_id
+            'pad_token_id': self.pad_token_id,
+            'eos_token_id': self.eos_token_id
         }
         
-        # Run generation in background thread (use full model)
+        # Run generation in background thread
         thread = Thread(
             target=self.model.generate,
             kwargs=generation_kwargs

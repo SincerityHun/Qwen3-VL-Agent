@@ -141,8 +141,8 @@ if __name__ == "__main__":
         print("Usage:")
         print("  python test_server_with_embeddings.py <path_to_tensors.pt>")
         print("\nExample:")
-        print("  python test_server_with_embeddings.py ../test_data/image_example_tensors.pt")
-        print("  python test_server_with_embeddings.py ../test_data/video_example_tensors.pt")
+        print("  python test_server_with_embeddings.py ../pt_data_examples/image_dog_tensors.pt")
+        print("  python test_server_with_embeddings.py ../pt_data_examples/image_IronMan_tensors.pt")
         sys.exit(1)
     
     embedding_file = sys.argv[1]

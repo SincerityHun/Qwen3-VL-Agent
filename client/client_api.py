@@ -41,6 +41,9 @@ class ClientAPI:
     
     def _tensor_to_list(self, tensor: torch.Tensor) -> List:
         """Convert tensor to nested list for JSON serialization"""
+        # Convert BFloat16 to Float32 first (BFloat16 not supported by numpy)
+        if tensor.dtype == torch.bfloat16:
+            tensor = tensor.float()
         return tensor.cpu().numpy().tolist()
     
     def _prepare_payload(
