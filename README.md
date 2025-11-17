@@ -7,7 +7,7 @@ This implementation separates Qwen3-VL inference into client and server componen
 - **Client**: Preprocessing + Vision Encoder + Gradio UI (Port 7860)
 - **Server**: LLM Inference with GPU acceleration (Port 8001)
 
-## 🏗️ Architecture
+## 🏗️ Baseline Architecture
 
 ```
 ┌─────────────────────────────────────┐
@@ -160,7 +160,7 @@ services:
 │   ├── ocr.ipynb
 │   └── ...
 │
-└── README/                     # Documentation
+└── README/                     # Documentation for Debugging and Development
     ├── README.md               # Implementation guide
     ├── CODE_MAPPING.md         # Source code mapping
     └── SERVER_TESTING_GUIDE.md # Testing guide
