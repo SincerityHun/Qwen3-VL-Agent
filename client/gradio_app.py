@@ -10,7 +10,17 @@ from preprocessor import ClientPreprocessor
 from vision_encoder import ClientVisionEncoder
 from client_api import ClientAPI
 from typing import List, Tuple, Optional
+import logging
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
+# Configure Gradio's logger to use the same format
+gradio_logger = logging.getLogger("gradio")
+gradio_logger.setLevel(logging.INFO)
 
 class Qwen3VLClient:
     """Main client application integrating all components"""
@@ -29,9 +39,9 @@ class Qwen3VLClient:
             server_url: URL of the inference server
             use_vision_encoder: Whether to run vision encoder on client
         """
-        print("=" * 60)
-        print("🚀 Initializing Qwen3-VL Client")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("🚀 Initializing Qwen3-VL Client")
+        logger.info("=" * 60)
         
         # Initialize preprocessor
         self.preprocessor = ClientPreprocessor(model_name)
@@ -42,18 +52,18 @@ class Qwen3VLClient:
             self.vision_encoder = ClientVisionEncoder(model_name)
         else:
             self.vision_encoder = None
-            print("⚠️  Vision Encoder disabled (will send pixel values to server)")
+            logger.warning("⚠️  Vision Encoder disabled (will send pixel values to server)")
         
         # Initialize API client
         self.api_client = ClientAPI(server_url)
         
         # Check server health
         if self.api_client.check_health():
-            print("✅ Server is healthy!")
+            logger.info("✅ Server is healthy!")
         else:
-            print("⚠️  Server health check failed!")
+            logger.warning("⚠️  Server health check failed!")
         
-        print("=" * 60)
+        logger.info("=" * 60)
     
     def process_and_generate(
         self,
@@ -83,10 +93,10 @@ class Qwen3VLClient:
             # Following the same logic as test_vision_embedding.py
             if 'pixel_values_videos' in inputs:
                 pixel_values = inputs['pixel_values_videos']
-                print(f"🎬 Processing video with shape: {pixel_values.shape}")
+                # logger.info(f"🎬 Processing video with shape: {pixel_values.shape}")
             elif 'pixel_values' in inputs:
                 pixel_values = inputs['pixel_values']
-                print(f"📷 Processing image with shape: {pixel_values.shape}")
+                # logger.info(f"📷 Processing image with shape: {pixel_values.shape}")
             else:
                 raise ValueError("No pixel_values or pixel_values_videos found in preprocessed inputs")
             
@@ -258,6 +268,8 @@ def main():
     gradio_server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
     gradio_server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
     
+    logger.info(f"Configuration: model={model_name}, server={server_url}, use_vision_encoder={use_vision_encoder}")
+    
     # Initialize client
     client = Qwen3VLClient(
         model_name=model_name,
@@ -266,6 +278,7 @@ def main():
     )
     
     # Create and launch Gradio interface
+    logger.info(f"🚀 Launching Gradio on {gradio_server_name}:{gradio_server_port}")
     demo = create_gradio_interface(client)
     demo.launch(
         server_name=gradio_server_name,

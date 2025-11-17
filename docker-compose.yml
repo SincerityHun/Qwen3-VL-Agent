@@ -6,23 +6,26 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+    image: shjung-qwen3vl-server:v0.1
     container_name: qwen3vl-server
     ports:
       - "8001:8001"
-    user: 1019:1019
+    # user: 1019:1019
     environment:
-      - MODEL_NAME=Qwen/Qwen3-VL-8B-Instruct
+      - MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct
       - DEVICE_MAP=auto
       - TORCH_DTYPE=auto
       - PORT=8001
-      - NVIDIA_VISIBLE_DEVICES=3
+      - CUDA_VISIBLE_DEVICES=0  
     volumes:
       - /mnt/ssd1/shjung/huggingface:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              device_ids: ['3'] 
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -38,23 +41,26 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
+    image: shjung-qwen3vl-client:v0.1
     container_name: qwen3vl-client
     ports:
       - "7860:7860"
-    user: 1019:1019
+    # user: 1019:1019
     environment:
       - SERVER_URL=http://server:8001
-      - MODEL_NAME=Qwen/Qwen3-VL-8B-Instruct
+      - MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct
       - GRADIO_SERVER_NAME=0.0.0.0
       - GRADIO_SERVER_PORT=7860
-      - NVIDIA_VISIBLE_DEVICES=3
+      - CUDA_VISIBLE_DEVICES=0  # 컨테이너 내부에서는 항상 0부터 시작
     volumes:
       - /mnt/ssd1/shjung/huggingface:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              device_ids: ['2'] 
+              capabilities: [gpu]
     depends_on:
       server:
         condition: service_healthy

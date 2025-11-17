@@ -3,6 +3,11 @@ ARG CUDA_VERSION=12.8.1
 ARG PYTHON_VERSION=3.12
 
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS base
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Seoul
+
 # Set working directory
 WORKDIR /app
 
@@ -11,25 +16,26 @@ RUN apt-get update -y && apt-get install -y \
     software-properties-common curl wget git sudo build-essential vim \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update -y \
-    && apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
-    && curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} \
+    && apt-get install -y python3.12 python3.12-dev python3.12-venv \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
     && python3 --version && pip3 --version
 
 # Create symbolic link for python
-RUN ln -s /usr/bin/python3.${PYTHON_VERSION} /usr/bin/python
+RUN ln -s /usr/bin/python3.12 /usr/bin/python
 
 # Copy requirements
 RUN python3 -m pip install -U pip uv
 ENV UV_HTTP_TIMEOUT=500
 
 # Copy Project package (Torch, flash-attention for CUDA 12.8)
-RUN uv pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
-RUN uv pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl
-COPY requirements.txt .
+RUN uv pip install --system --no-build-isolation --no-cache-dir torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+RUN uv pip install --system --no-build-isolation --no-cache-dir https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl
+
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt .
+RUN uv pip install --system --no-build-isolation --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY llm_inference.py .

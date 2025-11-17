@@ -5,7 +5,7 @@
 This implementation separates Qwen3-VL inference into client and server components:
 
 - **Client**: Preprocessing + Vision Encoder + Gradio UI (Port 7860)
-- **Server**: LLM Inference with GPU acceleration (Port 8000)
+- **Server**: LLM Inference with GPU acceleration (Port 8001)
 
 ## 🏗️ Architecture
 
@@ -15,18 +15,18 @@ This implementation separates Qwen3-VL inference into client and server componen
 │  ┌───────────────────────────────┐  │
 │  │     Gradio Web UI (7860)      │  │
 │  └───────────────────────────────┘  │
-│              ↓                       │
+│              ↓                      │
 │  ┌───────────────────────────────┐  │
 │  │   Vision Preprocessing        │  │
 │  │   (qwen-vl-utils)             │  │
 │  └───────────────────────────────┘  │
-│              ↓                       │
+│              ↓                      │
 │  ┌───────────────────────────────┐  │
 │  │   Vision Encoder (ViT)        │  │
 │  │   (2-3GB model)               │  │
 │  └───────────────────────────────┘  │
-│              ↓                       │
-│       vision_embeddings              │
+│              ↓                      │
+│       vision_embeddings             │
 └──────────────┼──────────────────────┘
                │ HTTP POST
                │ /api/v1/generate
@@ -36,14 +36,14 @@ This implementation separates Qwen3-VL inference into client and server componen
 │  ┌───────────────────────────────┐  │
 │  │   FastAPI Server (8000)       │  │
 │  └───────────────────────────────┘  │
-│              ↓                       │
+│              ↓                      │
 │  ┌───────────────────────────────┐  │
 │  │   LLM Inference               │  │
 │  │   (Language Model Only)       │  │
 │  │   GPU Accelerated             │  │
 │  └───────────────────────────────┘  │
-│              ↓                       │
-│       generated_text                 │
+│              ↓                      │
+│       generated_text                │
 └─────────────────────────────────────┘
 ```
 
@@ -59,16 +59,19 @@ This implementation separates Qwen3-VL inference into client and server componen
 
 ```bash
 # Build both containers
-docker-compose build
+docker compose build
 
 # Start services (server first, then client)
-docker-compose up -d
+docker compose up
 
 # Check logs
-docker-compose logs -f
+docker compose logs -f
 
 # Access Gradio UI
 # Open browser: http://localhost:7860
+
+# Remove containers when done
+docker compose down
 ```
 
 ### 2. Environment Configuration
@@ -78,39 +81,51 @@ Edit `docker-compose.yml` to customize:
 ```yaml
 services:
   server:
+    image: shjung-qwen3vl-server:v0.1      # Docker image name
+    ports:
+      - "8001:8001"                         # Server port mapping
     environment:
-      - MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct  # Change model here
-      - DEVICE_MAP=auto                       # GPU allocation
-      - TORCH_DTYPE=auto                      # fp16/fp32
-  
+      - MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct # Model to use
+      - DEVICE_MAP=auto                      # Automatic device mapping
+      - TORCH_DTYPE=auto                     # Automatic dtype selection
+      - PORT=8001                            # Server port
+      - CUDA_VISIBLE_DEVICES=0               # GPU visibility inside container
+    volumes:
+      - /mnt/ssd1/shjung/huggingface:/root/.cache/huggingface # Model cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['3']             # Host GPU 3 → Container GPU 0
+              capabilities: [gpu]
+
   client:
+    image: shjung-qwen3vl-client:v0.1      # Docker image name
+    ports:
+      - "7860:7860"                         # Gradio port mapping
     environment:
-      - SERVER_URL=http://server:8000         # Server endpoint
-      - MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct  # Must match server
+      - SERVER_URL=http://server:8001       # Server URL (internal network)
+      - MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct # Model to use
+      - GRADIO_SERVER_NAME=0.0.0.0          # Gradio host (0.0.0.0 for external access)
+      - GRADIO_SERVER_PORT=7860             # Gradio port
+      - CUDA_VISIBLE_DEVICES=0              # GPU visibility inside container
+    volumes:
+      - /mnt/ssd1/shjung/huggingface:/root/.cache/huggingface # Model cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2']             # Host GPU 2 → Container GPU 0
+              capabilities: [gpu]
 ```
 
-### 3. Manual Build (without Docker Compose)
-
-#### Server
-```bash
-cd server
-docker build -t qwen3vl-server .
-docker run --gpus all -p 8000:8000 \
-  -e MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct \
-  -v ~/.cache/huggingface:/root/.cache/huggingface \
-  qwen3vl-server
-```
-
-#### Client
-```bash
-cd client
-docker build -t qwen3vl-client .
-docker run -p 7860:7860 \
-  -e SERVER_URL=http://localhost:8000 \
-  -e MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct \
-  -v ~/.cache/huggingface:/root/.cache/huggingface \
-  qwen3vl-client
-```
+**GPU Allocation Notes:**
+- Server uses host GPU 3, appears as `cuda:0` inside container
+- Client uses host GPU 2, appears as `cuda:0` inside container
+- `device_ids` sets physical GPU at Docker level
+- `CUDA_VISIBLE_DEVICES=0` ensures app sees only that GPU
 
 ## 📁 Project Structure
 
@@ -119,22 +134,23 @@ docker run -p 7860:7860 \
 ├── docker-compose.yml          # Orchestration config
 │
 ├── client/                     # Client container
-│   ├── README.md        
-│   ├── Dockerfile
-│   ├── requirements.txt
+│   ├── Dockerfile              # Client container build
+│   ├── requirements.txt        # Python dependencies (frozen)
 │   ├── preprocessor.py         # Vision preprocessing (qwen-vl-utils)
-│   ├── vision_encoder.py       # Vision Encoder extraction (2048-dim output)
-│   ├── client_api.py           # HTTP client for server
-│   ├── gradio_app.py           # Gradio UI
-│   └── test_vision_embedding.py # Test vision encoder (images/videos)
+│   ├── vision_encoder.py       # Vision Encoder (2048-dim embeddings, CPU)
+│   ├── client_api.py           # HTTP client for server communication
+│   ├── gradio_app.py           # Gradio UI (port 7860)
+│   ├── test_vision_embedding.py # Test vision encoder (images/videos)
+│   └── save_test_embeddings.py # Save embeddings for debugging
 │
 ├── server/                     # Server container
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── llm_inference.py        # LLM generation logic
-│   └── server_api.py           # FastAPI endpoints
+│   ├── Dockerfile              # Server container build
+│   ├── requirements.txt        # Python dependencies (frozen)
+│   ├── llm_inference.py        # LLM generation (Language Model on GPU)
+│   ├── server_api.py           # FastAPI endpoints (port 8001)
+│   └── test_server_with_embeddings.py # End-to-end test
 │
-├── qwen-vl-utils/              # Vision processing utilities (But we just import this package in pip)
+├── qwen-vl-utils/              # Vision processing utilities (pip package)
 │   └── src/qwen_vl_utils/
 │       ├── __init__.py
 │       └── vision_process.py   # Image/video loading, resizing
@@ -146,7 +162,8 @@ docker run -p 7860:7860 \
 │
 └── README/                     # Documentation
     ├── README.md               # Implementation guide
-    └── CODE_MAPPING.md         # Source code mapping
+    ├── CODE_MAPPING.md         # Source code mapping
+    └── SERVER_TESTING_GUIDE.md # Testing guide
 ```
 
 ## 🔧 API Reference
@@ -171,13 +188,13 @@ POST /api/v1/generate
 
 Request:
 {
-  "input_ids": [[1, 2, 3, ...]],
-  "vision_embeddings": [[0.1, 0.2, ...], ...],
-  "vision_token_positions": [5, 10],
-  "attention_mask": [[1, 1, 1, ...]],
-  "max_new_tokens": 128,
-  "temperature": 0.7,
-  "top_p": 0.8
+  "input_ids": [[1, 2, 3, ...]],              # Tokenized text
+  "vision_embeddings": [[0.1, 0.2, ...], ...], # 2048-dim vision embeddings from client
+  "vision_token_positions": [5, 10],          # Positions of <|vision_start|> tokens
+  "attention_mask": [[1, 1, 1, ...]],         # Attention mask
+  "max_new_tokens": 128,                       # Max tokens to generate
+  "temperature": 0.7,                          # Sampling temperature
+  "top_p": 0.8                                 # Nucleus sampling
 }
 
 Response:
@@ -191,104 +208,26 @@ Response:
 ```bash
 POST /api/v1/generate_stream
 
-# Returns newline-delimited JSON (NDJSON)
+Request: (same as /api/v1/generate)
+
+Response: (newline-delimited JSON stream)
 {"text": "Hello"}
-{"text": "Hello world"}
-{"text": "Hello world!", "finish_reason": "stop"}
-```
-
-## 🧪 Testing
-
-### Test Vision Encoder (Client-Side Only)
-
-Test vision preprocessing and encoding without requiring the server:
-
-```bash
-cd client
-
-# Test with image
-python test_vision_embedding.py image ../examples/dog.jpg
-
-# Test with video
-python test_vision_embedding.py video ../examples/IronMan.mp4
-
-# Expected output:
-# ✅ Embeddings are non-zero
-# ✅ Embeddings are finite
-# ✅ Vision encoder hidden dimension is 2048
-# ✅ Vision token positions found
-```
-
-**Note**: Vision encoder outputs **2048-dim** embeddings, which are later projected to 3584-dim by the LLM.
-
-### Test Server Health
-```bash
-curl http://localhost:8000/health
-```
-
-### Test Client Access
-```bash
-# Open browser
-http://localhost:7860
-```
-
-### Test End-to-End
-1. Upload an image in Gradio UI
-2. Enter prompt: "Describe this image"
-3. Click Submit
-4. Check server logs: `docker-compose logs server`
-
-## 📊 Performance Tuning
-
-### GPU Memory Optimization
-
-For low-memory GPUs, modify server Dockerfile:
-```dockerfile
-# Use 4-bit quantization
-RUN pip install bitsandbytes
-
-# In llm_inference.py
-self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-    model_name,
-    load_in_4bit=True,
-    device_map="auto"
-)
-```
-
-### Client-Side Optimization
-
-If Vision Encoder is too large for client devices:
-```python
-# In client_api.py, send pixel_values instead of embeddings
-# Skip vision_encoder.py entirely
+{"text": " world"}
+{"text": "!", "finish_reason": "stop"}
 ```
 
 ## 🛠️ Troubleshooting
 
-### Issue: Server not starting
+### Issue: Package Version Error
 ```bash
-# Check GPU availability
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+# The Qwen3-VL model requires transformers >= 4.57.0
+pip install "transformers>=4.57.0"
 
-# Check logs
-docker-compose logs server
-```
+pip install qwen-vl-utils==0.0.14
+# It's highly recommended to use `[decord]` feature for faster video loading.
+# pip install qwen-vl-utils[decord]
 
-### Issue: Client can't connect to server
-```bash
-# Test server from client container
-docker exec qwen3vl-client curl http://server:8000/health
-
-# Check network
-docker network inspect qwen3vl_qwen3vl-network
-```
-
-### Issue: Out of memory
-```bash
-# Reduce model size or use quantization
-# Set in docker-compose.yml:
-environment:
-  - MODEL_NAME=Qwen/Qwen3-VL-2B-Instruct  # Use 2B instead of 7B
+pip install -U flash-attn --no-build-isolation
 ```
 
 ## 📝 Development Mode
@@ -299,7 +238,7 @@ Run without Docker for development:
 ```bash
 cd client
 
-# Create virtual environment with uv
+# Create virtual environment for client with uv 
 uv venv -p 3.12
 source .venv/bin/activate
 
@@ -307,14 +246,20 @@ source .venv/bin/activate
 uv pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
 
 # Install dependencies
-uv pip install -r requirements.txt
+uv pip install --no-build-isolation -r requirements.txt
 
 # Test vision encoder
 python test_vision_embedding.py image ../examples/dog.jpg
 python test_vision_embedding.py video ../examples/IronMan.mp4
 
+# Save test embeddings
+python save_test_embeddings.py image ../examples/dog.jpg
+python save_test_embeddings.py video ../examples/IronMan.mp4
+
 # Run Gradio app
-export SERVER_URL=http://localhost:8000
+export SERVER_URL=http://localhost:8001
+export HF_HOME="/mnt/ssd1/shjung/huggingface" # Huggingface cache directory
+export CUDA_VISIBLE_DEVICES=2 # It should be different from server GPU
 python gradio_app.py
 ```
 
@@ -325,8 +270,26 @@ python gradio_app.py
 
 ### Server Setup
 ```bash
-cd server
-pip install -r requirements.txt
+cd client
+
+# Create virtual environment for client with uv 
+uv venv -p 3.12
+source .venv/bin/activate
+
+# Install PyTorch & Flash-attention with CUDA support
+uv pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+RUN uv pip install --system --no-build-isolation --no-cache-dir https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl
+
+# Install dependencies
+uv pip install --no-build-isolation -r requirements.txt
+
+# Test Server with saved test embeddings
+python test_server_with_embeddings.py image ../pt_data_examples/image_dog_tensors.pt
+python test_server_with_embeddings.py video ../pt_data_examples/video_ironman_tensors.pt
+
+# Run Gradio app
+export HF_HOME="/mnt/ssd1/shjung/huggingface" # Huggingface cache directory
+export CUDA_VISIBLE_DEVICES=2 # It should be different from client GPU
 python server_api.py
 ```
 
@@ -337,17 +300,8 @@ The client uses `qwen-vl-utils` for video processing with the following backends
 2. torchcodec - Experimental
 3. torchvision - Deprecated, avoid
 
-If you encounter video processing errors, ensure `decord` is installed in your environment.
+If you encounter video processing errors, ensure `decord` is installed in your environment. and use ```pip install qwen-vl-utils[decord]``` to install the package with decord support.
 
-## 🔐 Production Deployment
-
-For production, add:
-
-1. **HTTPS/TLS**: Use nginx reverse proxy
-2. **Authentication**: Add API keys to FastAPI
-3. **Rate Limiting**: Use FastAPI middleware
-4. **Monitoring**: Add Prometheus metrics
-5. **Load Balancing**: Deploy multiple server replicas
 
 ## 📚 References
 
