@@ -7,7 +7,7 @@ import requests
 import json
 import torch
 import numpy as np
-from typing import Dict, List, Any, Iterator
+from typing import Dict, List, Any, Iterator, Optional
 import base64
 import io
 
@@ -41,6 +41,9 @@ class ClientAPI:
     
     def _tensor_to_list(self, tensor: torch.Tensor) -> List:
         """Convert tensor to nested list for JSON serialization"""
+        # Handle None tensor (text-only input)
+        if tensor is None:
+            return None
         # Convert BFloat16 to Float32 first (BFloat16 not supported by numpy)
         if tensor.dtype == torch.bfloat16:
             tensor = tensor.float()
@@ -49,7 +52,7 @@ class ClientAPI:
     def _prepare_payload(
         self,
         input_ids: torch.Tensor,
-        vision_embeddings: torch.Tensor,
+        vision_embeddings: Optional[torch.Tensor],
         vision_token_positions: List[int],
         attention_mask: torch.Tensor,
         max_new_tokens: int = 128,
@@ -61,7 +64,7 @@ class ClientAPI:
         
         Args:
             input_ids: Token IDs [batch, seq_len]
-            vision_embeddings: Vision features [num_patches, hidden_dim]
+            vision_embeddings: Vision features [num_patches, hidden_dim] or None for text-only
             vision_token_positions: Positions of vision tokens
             attention_mask: Attention mask [batch, seq_len]
             max_new_tokens: Maximum tokens to generate
@@ -86,7 +89,7 @@ class ClientAPI:
     def generate(
         self,
         input_ids: torch.Tensor,
-        vision_embeddings: torch.Tensor,
+        vision_embeddings: Optional[torch.Tensor],
         vision_token_positions: List[int],
         attention_mask: torch.Tensor,
         max_new_tokens: int = 128,
@@ -131,7 +134,7 @@ class ClientAPI:
     def generate_stream(
         self,
         input_ids: torch.Tensor,
-        vision_embeddings: torch.Tensor,
+        vision_embeddings: Optional[torch.Tensor],
         vision_token_positions: List[int],
         attention_mask: torch.Tensor,
         max_new_tokens: int = 128,

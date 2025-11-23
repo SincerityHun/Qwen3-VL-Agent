@@ -170,7 +170,7 @@ class ServerLLMInference:
     def generate(
         self,
         input_ids: torch.Tensor,
-        vision_embeddings: torch.Tensor,
+        vision_embeddings: Optional[torch.Tensor],
         vision_token_positions: list,
         attention_mask: Optional[torch.Tensor] = None,
         max_new_tokens: int = 128,
@@ -183,7 +183,7 @@ class ServerLLMInference:
         
         Args:
             input_ids: Token IDs [batch, seq_len]
-            vision_embeddings: Vision features [num_patches, hidden_dim]
+            vision_embeddings: Vision features [num_patches, hidden_dim] or None for text-only
             vision_token_positions: Positions of vision tokens
             attention_mask: Attention mask [batch, seq_len]
             max_new_tokens: Maximum tokens to generate
@@ -196,12 +196,16 @@ class ServerLLMInference:
         """
         logger.info("🔥 Starting generation...")
         logger.info(f"   Input shape: {input_ids.shape}")
-        logger.info(f"   Vision embeddings: {vision_embeddings.shape}")
-        logger.info(f"   Vision positions: {vision_token_positions}")
+        if vision_embeddings is not None:
+            logger.info(f"   Vision embeddings: {vision_embeddings.shape}")
+            logger.info(f"   Vision positions: {vision_token_positions}")
+        else:
+            logger.info("   Text-only generation (no vision embeddings)")
         
         # Move inputs to device
         input_ids = input_ids.to(self.device)
-        vision_embeddings = vision_embeddings.to(self.device)
+        if vision_embeddings is not None:
+            vision_embeddings = vision_embeddings.to(self.device)
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
         
@@ -209,10 +213,15 @@ class ServerLLMInference:
         text_embeds = self.model.model.language_model.embed_tokens(input_ids)
         logger.info(f"   Text embeddings: {text_embeds.shape}")
         
-        # 2. Merge vision embeddings into text embeddings
-        inputs_embeds = self._merge_vision_embeddings(
-            input_ids, text_embeds, vision_embeddings, vision_token_positions
-        )
+        # 2. Merge vision embeddings into text embeddings (if provided)
+        if vision_embeddings is not None:
+            inputs_embeds = self._merge_vision_embeddings(
+                input_ids, text_embeds, vision_embeddings, vision_token_positions
+            )
+        else:
+            # Text-only: use text embeddings directly
+            inputs_embeds = text_embeds
+            logger.info("   Using text embeddings only (no vision merge)")
         
         # 3. CRITICAL FIX: Temporarily patch model.device property
         # When Vision Encoder is on CPU, model.device returns 'cpu' (first parameter device)
@@ -234,13 +243,17 @@ class ServerLLMInference:
                 input_ids=input_ids,  # For sequence length tracking
                 inputs_embeds=inputs_embeds,  # Actual embeddings to use
                 attention_mask=attention_mask,
+                min_new_tokens=20,  # Ensure at least 20 tokens (avoid premature EOS)
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 do_sample=do_sample,
                 use_cache=True,
                 pad_token_id=self.pad_token_id,
-                eos_token_id=self.eos_token_id
+                eos_token_id=self.eos_token_id,
+                repetition_penalty=1.1,  # Prevent repetition
+                no_repeat_ngram_size=3,  # Don't repeat 3-grams
+                early_stopping=True,  # Stop when EOS is generated
             )
             
         finally:
@@ -263,7 +276,7 @@ class ServerLLMInference:
     def generate_stream(
         self,
         input_ids: torch.Tensor,
-        vision_embeddings: torch.Tensor,
+        vision_embeddings: Optional[torch.Tensor],
         vision_token_positions: list,
         attention_mask: Optional[torch.Tensor] = None,
         max_new_tokens: int = 128,
@@ -280,15 +293,22 @@ class ServerLLMInference:
         
         # Move inputs to device
         input_ids = input_ids.to(self.device)
-        vision_embeddings = vision_embeddings.to(self.device)
+        if vision_embeddings is not None:
+            vision_embeddings = vision_embeddings.to(self.device)
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
         
         # Get merged embeddings
         text_embeds = self.model.model.language_model.embed_tokens(input_ids)
-        inputs_embeds = self._merge_vision_embeddings(
-            input_ids, text_embeds, vision_embeddings, vision_token_positions
-        )
+        
+        if vision_embeddings is not None:
+            inputs_embeds = self._merge_vision_embeddings(
+                input_ids, text_embeds, vision_embeddings, vision_token_positions
+            )
+        else:
+            # Text-only: use text embeddings directly
+            inputs_embeds = text_embeds
+            logger.info("   Text-only streaming (no vision merge)")
         
         # Setup streaming
         from transformers import TextIteratorStreamer
@@ -304,6 +324,7 @@ class ServerLLMInference:
             'input_ids': input_ids,  # For sequence length tracking
             'inputs_embeds': inputs_embeds,  # Actual embeddings to use
             'attention_mask': attention_mask,
+            'min_new_tokens': 20,  # Ensure at least 20 tokens
             'max_new_tokens': max_new_tokens,
             'temperature': temperature,
             'top_p': top_p,
@@ -311,7 +332,10 @@ class ServerLLMInference:
             'streamer': streamer,
             'use_cache': True,
             'pad_token_id': self.pad_token_id,
-            'eos_token_id': self.eos_token_id
+            'eos_token_id': self.eos_token_id,
+            'repetition_penalty': 1.1,  # Prevent repetition
+            'no_repeat_ngram_size': 3,  # Don't repeat 3-grams
+            'early_stopping': True,  # Stop when EOS is generated
         }
         
         # Run generation in background thread

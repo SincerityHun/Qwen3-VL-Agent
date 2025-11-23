@@ -259,8 +259,8 @@ if __name__ == "__main__":
         print("  python test_vision_embedding.py video <path_to_video>")
         print("  python test_vision_embedding.py image <path_to_image>")
         print("\nExample:")
-        print("  python test_vision_embedding.py video ../examples/IronMan.mp4")
-        print("  python test_vision_embedding.py image ../examples/dog.jpg")
+        print("  python client/test/test_vision_embedding.py image examples/dog.jpg")
+        print("  python client/test/test_vision_embedding.py video examples/IronMan.mp4")
         sys.exit(1)
     
     media_type = sys.argv[1]
@@ -269,7 +269,7 @@ if __name__ == "__main__":
     if media_type == "video":
         success = test_vision_embedding(media_path)
     elif media_type == "image":
-        success = test_image_embedding(media_path)
+        success = test_image_embedding(media_path) 
     else:
         print(f"❌ Unknown media type: {media_type}")
         print("   Use 'video' or 'image'")

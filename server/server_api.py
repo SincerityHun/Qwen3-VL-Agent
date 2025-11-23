@@ -35,12 +35,13 @@ llm_inference = None
 class GenerateRequest(BaseModel):
     """Request model for generation"""
     input_ids: List[List[int]]
-    vision_embeddings: List[List[float]]
+    vision_embeddings: Optional[List[List[float]]] = None  # Optional for text-only
     vision_token_positions: List[int]
     attention_mask: List[List[int]]
     max_new_tokens: int = 128
     temperature: float = 0.7
     top_p: float = 0.8
+    emotion_state: Optional[dict] = None  # Optional emotion state for conditioning
 
 
 class GenerateResponse(BaseModel):
@@ -107,11 +108,22 @@ async def generate(request: GenerateRequest):
     try:
         logger.info("📥 Received generation request")
         logger.info(f"   Input IDs shape: {len(request.input_ids)}x{len(request.input_ids[0])}")
-        logger.info(f"   Vision embeddings: {len(request.vision_embeddings)}x{len(request.vision_embeddings[0])}")
+        
+        # Handle vision embeddings (may be None for text-only)
+        if request.vision_embeddings is not None:
+            logger.info(f"   Vision embeddings: {len(request.vision_embeddings)}x{len(request.vision_embeddings[0])}")
+            vision_embeddings = torch.tensor(request.vision_embeddings, dtype=torch.float32)
+        else:
+            logger.info("   Text-only input (no vision embeddings)")
+            vision_embeddings = None
+        
+        # Log emotion state if provided
+        if request.emotion_state:
+            logger.info(f"   🎭 Emotion: {request.emotion_state.get('emotion_label', 'unknown')} "
+                       f"(polarity={request.emotion_state.get('polarity', 0):.2f})")
         
         # Convert lists to tensors
         input_ids = torch.tensor(request.input_ids, dtype=torch.long)
-        vision_embeddings = torch.tensor(request.vision_embeddings, dtype=torch.float32)
         attention_mask = torch.tensor(request.attention_mask, dtype=torch.long)
         
         # Generate
@@ -156,9 +168,21 @@ async def generate_stream(request: GenerateRequest):
         try:
             logger.info("📥 Received streaming generation request")
             
+            # Log emotion state if provided
+            if request.emotion_state:
+                logger.info(f"   🎭 Emotion: {request.emotion_state.get('emotion_label', 'unknown')} "
+                           f"(polarity={request.emotion_state.get('polarity', 0):.2f})")
+            
             # Convert lists to tensors
             input_ids = torch.tensor(request.input_ids, dtype=torch.long)
-            vision_embeddings = torch.tensor(request.vision_embeddings, dtype=torch.float32)
+            
+            # Handle vision embeddings (may be None for text-only)
+            if request.vision_embeddings is not None:
+                vision_embeddings = torch.tensor(request.vision_embeddings, dtype=torch.float32)
+            else:
+                logger.info("   Text-only streaming (no vision embeddings)")
+                vision_embeddings = None
+                
             attention_mask = torch.tensor(request.attention_mask, dtype=torch.long)
             
             # Stream generation

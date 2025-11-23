@@ -188,8 +188,13 @@ Client → { Vision Embedding + User Text + Emotion Tags } → Server LLM
 1. 감정 인식 품질
 
 2. 다운스트림 챗봇 품질
+내기분에 맞춰서 잘 답장했는지
+내가 지금 기분 좃창났는데 챗봇이 나한테 존나 긍정적으로 답장함 ㅡㅡ; 이런거
 
 3. 시스템 리소스 효율성
+    - Latency
+    - Throughput
+    - Client-side resource usage
 
 ## Novelty of proposed System
 1. **Real-time Emotion-aware Multimodal Interaction**: Real-time emotion capture via webcam and microphone, integrated with text and visual inputs for a more empathetic chatbot response.
@@ -200,3 +205,15 @@ Client → { Vision Embedding + User Text + Emotion Tags } → Server LLM
 3. **Resource Efficiency**: 
 
 4. **Modular Design**:
+
+
+## 시나리오
+e.g. 사내 상황에서 뭔가 고민을 얘기해야 상황, 기분 상한게 보이는데 챗봇이 그걸 캐치해서 적절히 대응해주는 지 아니면 이거와 무관하게 대답하는 지 평가
+
+1. 사용자가 웹캠과 마이크를 통해 실시간으로 자신의 표정과 음성을 서버에 전송한다.
+2. 클라이언트는 UniMSE 모델을 사용하여 사용자의 감정 상태(예: 긍정적, 부정적, 중립적)를 실시간으로 분석한다.
+3. 사용자가 이미지나 비디오를 업로드하고 질문을 입력한다.
+4. 클라이언트는 Qwen-VL Vision Encoder를 사용하여 업로드된 이미지/비디오를 임베딩한다.
+5. 클라이언트는 감정 상태, 이미지/비디오 임베딩, 질문 텍스트를 서버로 전송한다.
+6. 서버는 Qwen-VL LLM을 사용하여 감정 상태에 맞춘 응답을 생성한다.
+7. 서버는 생성된 응답을 클라이언트로 전송한다.

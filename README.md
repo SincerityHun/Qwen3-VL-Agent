@@ -249,12 +249,12 @@ uv pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url ht
 uv pip install --no-build-isolation -r requirements.txt
 
 # Test vision encoder
-python test_vision_embedding.py image ../examples/dog.jpg
-python test_vision_embedding.py video ../examples/IronMan.mp4
+python client/test/test_vision_embedding.py image examples/dog.jpg
+python client/test/test_vision_embedding.py video examples/IronMan.mp4
 
 # Save test embeddings
-python save_test_embeddings.py image ../examples/dog.jpg
-python save_test_embeddings.py video ../examples/IronMan.mp4
+python client/test/save_test_embeddings.py image examples/dog.jpg
+python client/test/save_test_embeddings.py video examples/IronMan.mp4
 
 # Run Gradio app
 export SERVER_URL=http://localhost:8001

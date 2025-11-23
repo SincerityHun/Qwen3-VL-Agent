@@ -1,6 +1,6 @@
 """
 Gradio Web UI for Qwen3-VL Client
-Provides user interface for multimodal chat
+Provides user interface for multimodal chat with emotion recognition
 """
 
 import gradio as gr
@@ -9,7 +9,8 @@ import torch
 from preprocessor import ClientPreprocessor
 from vision_encoder import ClientVisionEncoder
 from client_api import ClientAPI
-from typing import List, Tuple, Optional
+from simple_processor_wrapper import SimpleProcessorWrapper, format_emotion_for_prompt, format_emotion_display
+from typing import List, Tuple, Optional, Dict
 import logging
 # Configure logging
 logging.basicConfig(
@@ -29,7 +30,8 @@ class Qwen3VLClient:
         self,
         model_name: str = "Qwen/Qwen3-VL-2B-Instruct",
         server_url: str = "http://server:8000",
-        use_vision_encoder: bool = True
+        use_vision_encoder: bool = True,
+        enable_emotion: bool = True
     ):
         """
         Initialize Qwen3-VL Client
@@ -38,6 +40,7 @@ class Qwen3VLClient:
             model_name: Model to use for preprocessing
             server_url: URL of the inference server
             use_vision_encoder: Whether to run vision encoder on client
+            enable_emotion: Whether to enable emotion recognition
         """
         logger.info("=" * 60)
         logger.info("🚀 Initializing Qwen3-VL Client")
@@ -54,6 +57,16 @@ class Qwen3VLClient:
             self.vision_encoder = None
             logger.warning("⚠️  Vision Encoder disabled (will send pixel values to server)")
         
+        # Initialize emotion recognition (simple_processor)
+        self.enable_emotion = enable_emotion
+        if enable_emotion:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.emotion_processor = SimpleProcessorWrapper(device=device)
+            logger.info("✅ Emotion recognition enabled (simple_processor)")
+        else:
+            self.emotion_processor = None
+            logger.info("ℹ️  Emotion recognition disabled")
+        
         # Initialize API client
         self.api_client = ClientAPI(server_url)
         
@@ -65,9 +78,45 @@ class Qwen3VLClient:
         
         logger.info("=" * 60)
     
+    def extract_emotion_from_video(
+        self, 
+        emotion_video_path: str,
+        text: Optional[str] = None
+    ) -> Optional[Dict]:
+        """
+        Extract emotion state from user's emotion video using simple_processor
+        
+        Args:
+            emotion_video_path: Path to video file with user's face/voice
+            text: User's text input (not used by simple_processor)
+            
+        Returns:
+            Emotion result dictionary or None if emotion disabled
+        """
+        if not self.enable_emotion or emotion_video_path is None:
+            return None
+        
+        try:
+            logger.info(f"🎭 Extracting emotion from video (simple_processor)")
+            
+            # Extract emotion using simple_processor
+            emotion_result = self.emotion_processor.extract_emotion_from_video(emotion_video_path)
+            
+            logger.info(f"✅ Detected emotion: {emotion_result['dominant_emotion']} "
+                       f"(sentiment={emotion_result['sentiment']:.3f})")
+            
+            return emotion_result
+            
+        except Exception as e:
+            logger.error(f"❌ Emotion extraction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     def process_and_generate(
         self,
         messages: List[dict],
+        emotion_result: Optional[Dict] = None,
         max_new_tokens: int = 128,
         temperature: float = 0.7,
         stream: bool = False
@@ -77,6 +126,7 @@ class Qwen3VLClient:
         
         Args:
             messages: List of message dictionaries
+            emotion_result: Optional emotion result from simple_processor
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             stream: Whether to stream response
@@ -84,27 +134,78 @@ class Qwen3VLClient:
         Returns:
             Generated text (or iterator if streaming)
         """
+        # Inject emotion context into messages if available
+        if emotion_result is not None:
+            # Format emotion for prompt
+            emotion_text = format_emotion_for_prompt(emotion_result)
+            
+            # Log emotion injection for debugging
+            logger.info("🎭 Injecting emotion context into prompt:")
+            logger.info(f"   Dominant: {emotion_result['dominant_emotion']}")
+            logger.info(f"   Sentiment: {emotion_result['sentiment']:.3f}")
+            
+            # Find last user message and prepend emotion context
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get('role') == 'user':
+                    content = messages[i]['content']
+                    if isinstance(content, list):
+                        # Multimodal content - add to first text element
+                        for item in content:
+                            if item.get('type') == 'text':
+                                original_text = item['text']
+                                item['text'] = emotion_text + item['text']
+                                logger.info(f"   ✅ Emotion context added to multimodal prompt")
+                                logger.info(f"   Original: {original_text[:50]}...")
+                                logger.info(f"   With emotion: {item['text'][:200]}...")
+                                break
+                    elif isinstance(content, str):
+                        # Text-only content
+                        original_content = content
+                        messages[i]['content'] = emotion_text + content
+                        logger.info(f"   ✅ Emotion context added to text-only prompt")
+                        logger.info(f"   Original: {original_content[:50]}...")
+                        logger.info(f"   With emotion: {messages[i]['content'][:200]}...")
+                    break
+        
         # 1. Preprocess
         inputs = self.preprocessor.preprocess(messages)
         
         # 2. Encode vision (if enabled on client)
+        vision_embeddings = None
+        vision_positions = []
+        
         if self.use_vision_encoder:
             # Check for either pixel_values (images) or pixel_values_videos (videos)
-            # Following the same logic as test_vision_embedding.py
+            # Text-only case: no vision data
             if 'pixel_values_videos' in inputs:
                 pixel_values = inputs['pixel_values_videos']
                 # logger.info(f"🎬 Processing video with shape: {pixel_values.shape}")
+                vision_embeddings = self.vision_encoder.encode(
+                    pixel_values,
+                    inputs.get('image_grid_thw'),
+                    inputs.get('video_grid_thw')
+                )
+                # Get vision token positions
+                vision_positions = self.preprocessor.extract_vision_token_positions(
+                    inputs['input_ids']
+                )
             elif 'pixel_values' in inputs:
                 pixel_values = inputs['pixel_values']
                 # logger.info(f"📷 Processing image with shape: {pixel_values.shape}")
+                vision_embeddings = self.vision_encoder.encode(
+                    pixel_values,
+                    inputs.get('image_grid_thw'),
+                    inputs.get('video_grid_thw')
+                )
+                # Get vision token positions
+                vision_positions = self.preprocessor.extract_vision_token_positions(
+                    inputs['input_ids']
+                )
             else:
-                raise ValueError("No pixel_values or pixel_values_videos found in preprocessed inputs")
-            
-            vision_embeddings = self.vision_encoder.encode(
-                pixel_values,
-                inputs.get('image_grid_thw'),
-                inputs.get('video_grid_thw')
-            )
+                # Text-only input (no image/video)
+                logger.info("💬 Text-only input (no vision data)")
+                vision_embeddings = None
+                vision_positions = []
         else:
             raise NotImplementedError(
                 "Vision encoder is disabled. "
@@ -112,12 +213,7 @@ class Qwen3VLClient:
                 "Set USE_VISION_ENCODER=true to enable client-side encoding."
             )
         
-        # 3. Get vision token positions
-        vision_positions = self.preprocessor.extract_vision_token_positions(
-            inputs['input_ids']
-        )
-        
-        # 4. Generate on server
+        # 3. Generate on server
         if stream:
             return self.api_client.generate_stream(
                 inputs['input_ids'],
@@ -141,8 +237,33 @@ class Qwen3VLClient:
 def create_gradio_interface(client: Qwen3VLClient):
     """Create Gradio interface for the client"""
     
-    def chat_fn(message, history, image, video):
-        """Process chat message with optional image/video"""
+    def chat_fn(message, history, image, video, emotion_video, enable_emotion_checkbox,max_tokens_value, temperature_value):
+        """Process chat message with optional image/video and emotion"""
+        
+        # Extract emotion result if emotion video provided and enabled
+        emotion_result = None
+        emotion_display_text = None
+        
+        if client.enable_emotion and enable_emotion_checkbox and emotion_video is not None:
+            try:
+                # Extract emotion from video
+                emotion_result = client.extract_emotion_from_video(
+                    emotion_video_path=emotion_video,
+                    text=message  # text parameter kept for future use
+                )
+                if emotion_result:
+                    emotion_display_text = format_emotion_display(emotion_result)
+                    # Add debug info to display
+                    emotion_display_text += "\n\n---\n**🔍 Debug Info:**\n"
+                    emotion_display_text += f"Emotion context will be injected into your prompt.\n"
+                    emotion_display_text += f"Check terminal logs for full prompt details."
+                else:
+                    emotion_display_text = "⚠️ Failed to detect emotion. Please try another video."
+            except Exception as e:
+                logger.error(f"❌ Emotion extraction failed: {e}")
+                emotion_display_text = f"❌ Error: {str(e)}"
+        else:
+            emotion_display_text = "🎭 **Emotion Recognition**\n\nUpload a video and enable emotion recognition to get emotion-aware responses."
         
         # Build messages list following the same format as test_vision_embedding.py
         # Note: process_vision_info expects direct keys without "type" for images/videos
@@ -175,55 +296,75 @@ def create_gradio_interface(client: Qwen3VLClient):
             new_history = history + [(message, "")]
             
             for partial_text in client.process_and_generate(
-                messages, 
-                max_new_tokens=256,
+                messages,
+                emotion_result=emotion_result,  # Pass emotion result
+                max_new_tokens=max_tokens_value,
+                temperature=temperature_value,
                 stream=True
             ):
                 full_response = partial_text
                 # Update last message with streaming response
                 new_history[-1] = (message, full_response)
-                yield new_history
+                yield new_history, emotion_display_text
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}"
             new_history = history + [(message, error_msg)]
-            yield new_history
+            yield new_history, emotion_display_text
     
     # Create interface
     with gr.Blocks(title="Qwen3-VL Client") as demo:
         gr.Markdown("""
-        # 🤖 Qwen3-VL Client
+        # 🤖 Qwen3-VL Client with Emotion Recognition
         
-        Multimodal AI Assistant powered by Qwen3-VL
+        Emotion-Aware Multimodal AI Assistant powered by Qwen3-VL + Simple Processor
         
         **Client-Server Architecture:**
-        - 🖥️ Client: Vision preprocessing & encoding
-        - 🚀 Server: LLM inference
+        - 🖥️ Client: Vision preprocessing, encoding & emotion recognition (7D emotion vector)
+        - 🚀 Server: LLM inference with emotion-aware prompting
         """)
         
         with gr.Row():
             with gr.Column(scale=1):
+                gr.Markdown("### 📸 Question Content")
                 image_input = gr.Image(
                     type="filepath",
-                    label="📷 Upload Image"
+                    label="📷 Upload Image (for your question)"
                 )
                 video_input = gr.Video(
-                    label="🎬 Upload Video"
+                    label="🎬 Upload Video (for your question)"
+                )
+                
+                gr.Markdown("### 🎭 Your Emotion State")
+                enable_emotion = gr.Checkbox(
+                    label="Enable Emotion Recognition",
+                    value=client.enable_emotion,
+                    interactive=True
+                )
+                gr.Markdown("Upload a video of yourself (with face & voice) for emotion-aware responses")
+                emotion_video_input = gr.Video(
+                    label="🎥 Your Video"
+                )
+                
+                emotion_display = gr.Markdown(
+                    "🎭 **Emotion Recognition**\n\n"
+                    "Upload a video and click Send to analyze your emotion state.\n\n"
+                    "The emotion will be detected when you submit your message."
                 )
                 
                 gr.Markdown("### Generation Settings")
-                # max_tokens = gr.Slider(
-                #     minimum=32, maximum=512, value=128, step=32,
-                #     label="Max New Tokens"
-                # )
-                # temperature = gr.Slider(
-                #     minimum=0.1, maximum=1.5, value=0.7, step=0.1,
-                #     label="Temperature"
-                # )
+                max_tokens = gr.Slider(
+                    minimum=32, maximum=512, value=128, step=32,
+                    label="Max New Tokens"
+                )
+                temperature = gr.Slider(
+                    minimum=0.1, maximum=1.5, value=0.7, step=0.1,
+                    label="Temperature"
+                )
             
             with gr.Column(scale=2):
                 chatbot = gr.Chatbot(
                     label="Conversation",
-                    height=500
+                    height=600
                 )
                 msg = gr.Textbox(
                     label="Your Message",
@@ -237,19 +378,19 @@ def create_gradio_interface(client: Qwen3VLClient):
         # Event handlers
         submit.click(
             chat_fn,
-            inputs=[msg, chatbot, image_input, video_input],
-            outputs=[chatbot]
+            inputs=[msg, chatbot, image_input, video_input, emotion_video_input, enable_emotion,max_tokens, temperature],
+            outputs=[chatbot, emotion_display]
         )
         
         msg.submit(
             chat_fn,
-            inputs=[msg, chatbot, image_input, video_input],
-            outputs=[chatbot]
+            inputs=[msg, chatbot, image_input, video_input, emotion_video_input, enable_emotion,max_tokens,temperature],
+            outputs=[chatbot, emotion_display]
         )
         
         clear.click(
-            lambda: (None, None, None, []),
-            outputs=[image_input, video_input, msg, chatbot]
+            lambda: (None, None, None, None, []),
+            outputs=[image_input, video_input, emotion_video_input, msg, chatbot]
         )
         
         # Clear message box after sending
@@ -265,16 +406,19 @@ def main():
     model_name = os.getenv("MODEL_NAME", "Qwen/Qwen3-VL-2B-Instruct")
     server_url = os.getenv("SERVER_URL", "http://server:8001")
     use_vision_encoder = os.getenv("USE_VISION_ENCODER", "true").lower() == "true"
+    enable_emotion = os.getenv("ENABLE_EMOTION", "true").lower() == "true"
     gradio_server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
     gradio_server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
     
-    logger.info(f"Configuration: model={model_name}, server={server_url}, use_vision_encoder={use_vision_encoder}")
+    logger.info(f"Configuration: model={model_name}, server={server_url}, "
+               f"use_vision_encoder={use_vision_encoder}, enable_emotion={enable_emotion}")
     
     # Initialize client
     client = Qwen3VLClient(
         model_name=model_name,
         server_url=server_url,
-        use_vision_encoder=use_vision_encoder
+        use_vision_encoder=use_vision_encoder,
+        enable_emotion=enable_emotion
     )
     
     # Create and launch Gradio interface

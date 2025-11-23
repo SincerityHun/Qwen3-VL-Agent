@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update -y && apt-get install -y \
-    software-properties-common curl wget git sudo build-essential vim \
+    software-properties-common curl wget git sudo build-essential vim ffmpeg \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update -y \
     && apt-get install -y python3.12 python3.12-dev python3.12-venv \
@@ -32,15 +32,14 @@ ENV UV_HTTP_TIMEOUT=500
 # Install PyTorch for CUDA 12.8 (before requirements.txt)
 RUN uv pip install --system --no-build-isolation --no-cache-dir torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
 
-# Copy and install other dependencies (skip torch dependencies)
+# Copy and install other dependencies (use constraints to skip torch)
 COPY requirements.txt .
-RUN uv pip install --system --no-build-isolation --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-build-isolation --no-cache-dir \
+    -r requirements.txt
 
-# Copy application code
-COPY preprocessor.py .
-COPY vision_encoder.py .
-COPY client_api.py .
-COPY gradio_app.py .
+# NOTE: Application code will be mounted as volume at runtime
+# No need to COPY source files - use docker-compose volumes instead
+# Expected mount: ./client:/app
 
 # Expose Gradio port
 EXPOSE 7860

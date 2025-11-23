@@ -3,3 +3,6 @@ __pycache__/
 *.env
 .gradio/
 pt_data_examples/
+*.pth
+processed_data/
+vosk-model-en-us-0.22/

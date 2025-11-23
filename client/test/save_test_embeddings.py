@@ -202,14 +202,14 @@ if __name__ == "__main__":
         print("Usage:")
         print("  python save_test_embeddings.py <media_type> <media_path> [output_dir]")
         print("\nExamples:")
-        print("  python save_test_embeddings.py image ../cookbooks/assets/omni_recognition/image_example.jpg")
-        print("  python save_test_embeddings.py video ../cookbooks/assets/omni_recognition/video_example.mp4")
-        print("  python save_test_embeddings.py image test.jpg ../test_data")
+        print("  python save_test_embeddings.py image examples/dog.jpg")
+        print("  python save_test_embeddings.py video examples/Ironman.mp4")
+
         sys.exit(1)
     
     media_type = sys.argv[1]
     media_path = sys.argv[2]
-    output_dir = sys.argv[3] if len(sys.argv) > 3 else "../pt_data_examples"
+    output_dir = sys.argv[3] if len(sys.argv) > 3 else "pt_data_examples"
     
     if media_type not in ['image', 'video']:
         print(f"❌ Invalid media type: {media_type}")

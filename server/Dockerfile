@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Install Python 3.12
 RUN apt-get update -y && apt-get install -y \
-    software-properties-common curl wget git sudo build-essential vim \
+    software-properties-common curl wget git sudo build-essential vim ffmpeg \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update -y \
     && apt-get install -y python3.12 python3.12-dev python3.12-venv \
@@ -37,9 +37,9 @@ RUN uv pip install --system --no-build-isolation --no-cache-dir https://github.c
 COPY requirements.txt .
 RUN uv pip install --system --no-build-isolation --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY llm_inference.py .
-COPY server_api.py .
+# NOTE: Application code will be mounted as volume at runtime
+# No need to COPY source files - use docker-compose volumes instead
+# Expected mount: ./server:/app
 
 # Expose FastAPI port
 EXPOSE 8001
