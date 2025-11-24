@@ -57,7 +57,7 @@ services:
       - TORCH_HOME=/root/.cache/torch
     volumes:
       - /mnt/ssd1/shjung/huggingface:/root/.cache/huggingface
-      - /mnt/ssd1/shjung/torch:/root/.cache/torch  # torch hub cache for emotion models
+      - /mnt/ssd1/shjung/tor  ch:/root/.cache/torch  # torch hub cache for emotion models
       - ./client:/app  # Mount source code for live development
     deploy:
       resources:
