@@ -131,15 +131,34 @@ class SimpleProcessorWrapper:
             dominant_idx = emotion_scores.index(max(emotion_scores))
             dominant_emotion = emotion_names[dominant_idx]
             
+            # Calculate top-3 emotions with scores
+            emotion_pairs = list(zip(emotion_names, emotion_scores))
+            sorted_emotions = sorted(emotion_pairs, key=lambda x: x[1], reverse=True)
+            top_3_emotions = sorted_emotions[:3]
+            
+            # Calculate confidence (difference between top 1 and top 2)
+            max_score = sorted_emotions[0][1]
+            second_score = sorted_emotions[1][1]
+            confidence = abs(max_score - second_score)
+            
+            # Determine if emotions are mixed (top 3 scores are close)
+            score_range = max_score - sorted_emotions[2][1]
+            is_mixed = score_range < 0.05  # If range < 0.05, consider mixed
+            
             result = {
                 'emotion_values': emotion_values,
                 'emotion_labels': self.EMOTION_LABELS,
                 'dominant_emotion': dominant_emotion,
                 'emotion_dict': emotion_dict,
-                'sentiment': emotion_values[0]
+                'sentiment': emotion_values[0],
+                'top_3_emotions': top_3_emotions,  # [(name, score), ...]
+                'confidence': confidence,  # How confident is dominant emotion
+                'is_mixed': is_mixed,  # Are emotions mixed?
+                'all_emotions_ranked': sorted_emotions  # Full ranking
             }
             
-            logger.info(f"✅ Emotion extracted: {dominant_emotion} (sentiment={emotion_values[0]:.3f})")
+            logger.info(f"✅ Emotion extracted: {dominant_emotion} (conf={confidence:.4f}, mixed={is_mixed})")
+            logger.info(f"   Top 3: {', '.join([f'{name}({score:.4f})' for name, score in top_3_emotions])}")
             
             return result
             
@@ -155,8 +174,9 @@ class SimpleProcessorWrapper:
         Returns:
             Dictionary with neutral emotion values
         """
-        # Default neutral values: [sentiment=0, happy=0.14, sad=0.14, anger=0.14, surprise=0.14, disgust=0.14, fear=0.14]
-        # Equal distribution across all emotions except sentiment
+        # EMOTION_LABELS = ['sentiment', 'happy', 'sad', 'anger', 'surprise', 'disgust', 'fear']
+        # Index:              0          1        2      3        4           5          6
+        # Default neutral values: equal distribution across all emotions
         default_values = [0.0, 0.17, 0.17, 0.17, 0.17, 0.17, 0.15]  # Sums to ~1.0 for emotions
         
         emotion_dict = {
@@ -164,12 +184,29 @@ class SimpleProcessorWrapper:
             for label, value in zip(self.EMOTION_LABELS, default_values)
         }
         
+        # Extract actual emotions (skip sentiment at index 0)
+        emotion_scores = default_values[1:]  # [0.17, 0.17, 0.17, 0.17, 0.17, 0.15]
+        emotion_names = self.EMOTION_LABELS[1:]  # ['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear']
+        
+        # Create emotion pairs and sort
+        emotion_pairs = list(zip(emotion_names, emotion_scores))
+        sorted_emotions = sorted(emotion_pairs, key=lambda x: x[1], reverse=True)
+        top_3_emotions = sorted_emotions[:3]
+        
+        # All emotions equal, so confidence is 0
+        confidence = 0.0
+        is_mixed = True  # Default is always mixed (all equal)
+        
         result = {
             'emotion_values': default_values,
             'emotion_labels': self.EMOTION_LABELS,
-            'dominant_emotion': 'happy',  # Default to happy (first emotion)
+            'dominant_emotion': 'happy',  # First emotion after sentiment
             'emotion_dict': emotion_dict,
-            'sentiment': 0.0,
+            'sentiment': 0.0,  # default_values[0]
+            'top_3_emotions': top_3_emotions,
+            'confidence': confidence,
+            'is_mixed': is_mixed,
+            'all_emotions_ranked': sorted_emotions,
             'is_default': True  # Flag to indicate this is a fallback
         }
         
@@ -195,7 +232,7 @@ class SimpleProcessorWrapper:
 
 def format_emotion_for_prompt(emotion_result: Dict) -> str:
     """
-    Format emotion result for LLM prompt
+    Format emotion result for LLM prompt with full emotion distribution
     
     Args:
         emotion_result: Result from extract_emotion_from_video
@@ -206,30 +243,65 @@ def format_emotion_for_prompt(emotion_result: Dict) -> str:
     emotion_dict = emotion_result['emotion_dict']
     dominant = emotion_result['dominant_emotion']
     sentiment = emotion_result['sentiment']
+    top_3 = emotion_result.get('top_3_emotions', [])
+    confidence = emotion_result.get('confidence', 0.0)
+    is_mixed = emotion_result.get('is_mixed', False)
     
     # Determine sentiment category
     sentiment_desc = "positive" if sentiment > 0.1 else "negative" if sentiment < -0.1 else "neutral"
     
+    # Build emotion state description
+    if is_mixed and len(top_3) >= 3:
+        # Mixed emotions - describe top 3
+        emotion_state = f"{top_3[0][0]} ({top_3[0][1]:.3f}), {top_3[1][0]} ({top_3[1][1]:.3f}), and {top_3[2][0]} ({top_3[2][1]:.3f})"
+        emotion_desc = f"The user is experiencing MIXED emotions: primarily {emotion_state}. The emotions are closely balanced (confidence: {confidence:.3f})."
+    else:
+        # Clear dominant emotion
+        if len(top_3) >= 2:
+            secondary = f", with some {top_3[1][0]} ({top_3[1][1]:.3f})"
+        else:
+            secondary = ""
+        emotion_desc = f"The user is clearly feeling {dominant} ({top_3[0][1]:.3f} score){secondary}. Confidence: {confidence:.3f}."
+    
     # Emotion-specific response guidelines
     emotion_guidelines = {
-        'happy': "Use an upbeat, cheerful tone. Include positive suggestions like outdoor activities, celebrations, or fun ideas. You can add jokes or playful comments.",
-        'sad': "Use a warm, supportive tone. Acknowledge their feelings gently. Suggest comforting activities like short walks, self-care, or calming routines. Be encouraging but not overly cheerful.",
-        'anger': "Use a calm, understanding tone. Avoid being defensive. Focus on constructive solutions and validate their frustration. Offer practical help.",
-        'fear': "Use a reassuring, clear tone. Provide step-by-step guidance. Emphasize safety and support. Help them feel more in control.",
-        'surprise': "Use an informative, patient tone. Provide clear explanations. Acknowledge their curiosity. Break down complex information.",
-        'disgust': "Use a respectful, constructive tone. Acknowledge their concerns. Suggest alternatives or solutions. Focus on improvement.",
+        'happy': "Use an upbeat, cheerful tone. Engage positively and celebrate with them.",
+        'sad': "Use a warm, supportive tone. Acknowledge their feelings gently and offer comfort.",
+        'anger': "Use a calm, understanding tone. Validate their frustration and offer constructive solutions.",
+        'fear': "Use a reassuring, clear tone. Provide step-by-step guidance and emphasize safety.",
+        'surprise': "Use an informative, patient tone. Provide clear explanations.",
+        'disgust': "Use a respectful, constructive tone. Acknowledge concerns and suggest alternatives.",
     }
     
-    guideline = emotion_guidelines.get(dominant, "Use a balanced, helpful tone.")
+    # Get guidelines for all relevant emotions
+    if is_mixed and len(top_3) >= 2:
+        guidelines = []
+        for emotion_name, score in top_3[:2]:
+            guideline = emotion_guidelines.get(emotion_name, "")
+            if guideline:
+                guidelines.append(f"- For {emotion_name} aspect: {guideline}")
+        guideline_text = "\n".join(guidelines)
+    else:
+        guideline_text = emotion_guidelines.get(dominant, "Use a balanced, helpful tone.")
     
-    # Create instruction-style prompt that doesn't override the user's question
-    prompt_text = f"""[IMPORTANT CONTEXT: The user's video shows they are currently feeling {dominant} (sentiment: {sentiment_desc}). 
+    # Create comprehensive emotion-aware prompt
+    prompt_text = f"""<emotional_context>
+User's Emotional State Analysis:
+{emotion_desc}
+Sentiment: {sentiment_desc} ({sentiment:+.3f})
+
+Full Emotion Distribution:
+{chr(10).join([f'- {name}: {score:.4f}' for name, score in top_3])}
 
 Response Guidelines:
-1. Answer their question/request directly and completely
-2. Adapt your tone and style: {guideline}
-3. After answering, you may add brief emotional support or suggestions appropriate to their {dominant} state
-4. Keep the focus on helping with their actual question while being emotionally aware]
+{guideline_text}
+
+IMPORTANT:
+1. Answer their question directly and completely
+2. Adapt your tone based on the emotional context above
+3. If emotions are mixed, acknowledge the complexity of their feelings
+4. Be empathetic and emotionally intelligent in your response
+</emotional_context>
 
 User's question: """
     
@@ -263,28 +335,49 @@ def format_emotion_display(emotion_result: Dict) -> str:
     emoji = emoji_map.get(dominant, '🙂')
     sentiment_emoji = '😊' if sentiment > 0 else '😢' if sentiment < 0 else '😐'
     
-    # Create bar chart visualization
+    # Get additional info
+    top_3 = emotion_result.get('top_3_emotions', [])
+    confidence = emotion_result.get('confidence', 0.0)
+    is_mixed = emotion_result.get('is_mixed', False)
+    
+    # Create bar chart visualization with ranking
     bars = []
-    for label in ['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear']:
-        value = emotion_dict[label]
-        bar_length = int(value * 20)  # Scale to 20 chars max
-        bar = '█' * bar_length
-        marker = '★' if label == dominant else ' '
-        bars.append(f"{marker} **{label.capitalize()}**: {bar} {value:.3f}")
+    all_emotions_ranked = emotion_result.get('all_emotions_ranked', [])
+    if all_emotions_ranked:
+        for idx, (label, value) in enumerate(all_emotions_ranked, 1):
+            bar_length = int(abs(value) * 30)  # Scale to 30 chars max
+            bar = '█' * bar_length
+            marker = '🥇' if idx == 1 else '🥈' if idx == 2 else '🥉' if idx == 3 else '  '
+            bars.append(f"{marker} **{label.capitalize()}**: {bar} {value:.4f}")
+    else:
+        # Fallback to original
+        for label in ['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear']:
+            value = emotion_dict[label]
+            bar_length = int(abs(value) * 30)
+            bar = '█' * bar_length
+            marker = '★' if label == dominant else '  '
+            bars.append(f"{marker} **{label.capitalize()}**: {bar} {value:.4f}")
     
     bars_text = "\n".join(bars)
     
+    # Emotion state description
+    if is_mixed:
+        state_desc = f"**MIXED EMOTIONS** (Confidence: {confidence:.4f})\n"
+        state_desc += f"Top emotions: {', '.join([f'{name} ({score:.3f})' for name, score in top_3[:3]])}"
+    else:
+        state_desc = f"**Clear {dominant.upper()}** (Confidence: {confidence:.4f})"
+    
     display = f"""## 🎭 Emotion Analysis
 
-### {emoji} Dominant Emotion: **{dominant.upper()}**
+### {emoji} {state_desc}
 
 **Sentiment**: {sentiment_emoji} {sentiment:+.3f} ({'Positive' if sentiment > 0 else 'Negative' if sentiment < 0 else 'Neutral'})
 
-### Emotion Breakdown:
+### Emotion Distribution (Ranked):
 {bars_text}
 
 ---
-💡 *The AI will respond with awareness of your emotional state*
+💡 *The AI responds with full awareness of your emotional state, including mixed feelings*
 """
     
     return display
